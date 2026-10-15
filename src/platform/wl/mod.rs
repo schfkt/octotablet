@@ -251,7 +251,7 @@ impl<T: HasWlId> PartialVec<T> {
     }
 }
 
-/// only one or none of these events may happen per tool per frame.
+/// Multiple transitions may occur in one hardware frame, such as In then Down.
 #[derive(PartialEq, Eq)]
 enum FrameState {
     In(ID),
@@ -263,7 +263,7 @@ enum FrameState {
 /// Keeps track of partial frame data that's in the processes of being assembled from messages.
 struct FrameInProgress {
     tool: ID,
-    state_transition: Option<FrameState>,
+    transitions: smallvec::SmallVec<[FrameState; 2]>,
     position: Option<[f32; 2]>,
     distance: Option<f32>,
     pressure: Option<f32>,
@@ -353,7 +353,7 @@ impl TabletState {
         } else {
             self.frames_in_progress.push(FrameInProgress {
                 tool,
-                state_transition: None,
+                transitions: smallvec::SmallVec::new(),
                 position: None,
                 distance: None,
                 pressure: None,
@@ -378,18 +378,20 @@ impl TabletState {
             // they're to be interpreted as all having happened similtaneously. Explicitly not an API-level guarantee, should it be?
 
             // emit ins and downs first...
-            match frame.state_transition {
-                Some(FrameState::In(ref tablet)) => self.events.push(raw_events::Event::Tool {
-                    tool: tool.clone(),
-                    event: raw_events::ToolEvent::In {
-                        tablet: tablet.clone(),
-                    },
-                }),
-                Some(FrameState::Down) => self.events.push(raw_events::Event::Tool {
-                    tool: tool.clone(),
-                    event: raw_events::ToolEvent::Down,
-                }),
-                _ => (),
+            for transition in &frame.transitions {
+                match transition {
+                    FrameState::In(tablet) => self.events.push(raw_events::Event::Tool {
+                        tool: tool.clone(),
+                        event: raw_events::ToolEvent::In {
+                            tablet: tablet.clone(),
+                        },
+                    }),
+                    FrameState::Down => self.events.push(raw_events::Event::Tool {
+                        tool: tool.clone(),
+                        event: raw_events::ToolEvent::Down,
+                    }),
+                    _ => (),
+                }
             }
             // Emit pose...
             // Position is the only required axis.
@@ -428,27 +430,28 @@ impl TabletState {
                 });
             }
             // emit ups and outs last... Return true from Out to mark the frame for clearing.
-            let clear = match frame.state_transition {
-                Some(FrameState::Up) => {
-                    self.events.push(raw_events::Event::Tool {
-                        tool: tool.clone(),
-                        event: raw_events::ToolEvent::Up,
-                    });
-                    // We're still In - leave the frame intact.
-                    false
+            let mut clear = false;
+            for transition in frame.transitions.drain(..) {
+                match transition {
+                    FrameState::Up => {
+                        self.events.push(raw_events::Event::Tool {
+                            tool: tool.clone(),
+                            event: raw_events::ToolEvent::Up,
+                        });
+                        // We're still In - leave the frame intact.
+                    }
+                    FrameState::Out => {
+                        self.events.push(raw_events::Event::Tool {
+                            tool: tool.clone(),
+                            event: raw_events::ToolEvent::Out,
+                        });
+                        // Out - destroy the partial frame afterwards.
+                        clear = true;
+                    }
+                    _ => (),
                 }
-                Some(FrameState::Out) => {
-                    self.events.push(raw_events::Event::Tool {
-                        tool: tool.clone(),
-                        event: raw_events::ToolEvent::Out,
-                    });
-                    // Out - destroy the partial frame afterwards.
-                    true
-                }
-                _ => false,
-            };
+            }
             // Frame finished. Remove all one-shot components.
-            frame.state_transition = None;
             frame.buttons.clear();
             clear
         } else {
@@ -608,3 +611,6 @@ impl Dispatch<wl_tablet::zwp_tablet_v2::ZwpTabletV2, ()> for TabletState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

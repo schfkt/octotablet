@@ -24,12 +24,12 @@ unsafe fn fetch_himetric_to_logical_pixel(hwnd: HWND) -> f32 {
     // The value of this call depends on the *thread's* DPI awareness registration with the system.
     // That's left to the calling thread, but this *should* always work on any of the awareness settings.
 
-    // Safety: idk. It's not about whether `hwnd` is valid, but idk what it *is* about :P
+    // SAFETY: the caller guarantees that hwnd refers to a live window.
     let mut dpi = unsafe { windows::Win32::UI::HiDpi::GetDpiForWindow(hwnd) };
 
     // Uh oh, failed to fetch... Try for system instead.
     if dpi == 0 {
-        // Safety: lmao
+        // SAFETY: GetDpiForSystem takes no pointers or handles.
         dpi = unsafe { windows::Win32::UI::HiDpi::GetDpiForSystem() };
     }
 
@@ -41,7 +41,7 @@ unsafe fn fetch_himetric_to_logical_pixel(hwnd: HWND) -> f32 {
 pub enum ID {
     /// "Tablet contextual ID" (`tcid`)
     Tablet(u32),
-    /// contextual cursor ID (`cid`) and IInkCursor ID
+    /// contextual cursor ID (`cid`) and `IInkCursor` ID
     Stylus { cid: u32, cursor_id: Option<i32> },
 }
 
@@ -228,7 +228,8 @@ impl DataFrame {
         self.events.clear();
 
         // Handle deletions.
-        for removal in self.raw_tablet_deletions.drain(..) {
+        // Remove from the end so earlier physical indices remain valid.
+        for removal in self.raw_tablet_deletions.drain(..).rev() {
             let tcid = self.raw_tablets.remove(removal).tcid();
             // Remove the concrete tablet of the same ID. (May not exist).
             self.tablets
@@ -247,7 +248,7 @@ impl DataFrame {
             .position(|tool| matches!(tool.internal_id.unwrap_ink(), ID::Stylus { cid: this_cid, .. } if *this_cid == cid)) {
                 // use `position` instead of find because of borrow issues.
                 return Ok(&mut tools[pos]);
-            };
+            }
         // Not found, make one!
         unsafe {
             // About cursors!
@@ -490,10 +491,6 @@ impl DataFrame {
 
             // Bail on any error.
             while let Some(Ok(packet)) = packets.next() {
-                // The status bits *seemed* useful but are actually redundant with all the other events
-                // we have.
-                // packet.status;
-
                 self.events.push(crate::events::raw::Event::Tool {
                     tool: stylus_id,
                     event: crate::events::raw::ToolEvent::Pose(packet.pose),
@@ -611,11 +608,12 @@ impl Manager {
         opts: crate::builder::Builder,
         hwnd: std::num::NonZeroIsize,
     ) -> WinResult<Self> {
-        // Safety: Uhh..
+        // SAFETY: the caller keeps hwnd valid and reserves its Ink input. COM
+        // interfaces below are owned wrappers; returned HRESULTs are propagated.
         unsafe {
             let hwnd = HWND(hwnd.get());
-            // Bitwise cast from isize to usize. (`as` is not necessarily bitwise. on such platforms, is this even sound? ehhh)
-            let hwnd_handle = HANDLE_PTR(std::mem::transmute::<isize, usize>(hwnd.0));
+            // Preserve the HWND bits when converting the signed carrier.
+            let hwnd_handle = HANDLE_PTR(usize::from_ne_bytes(hwnd.0.to_ne_bytes()));
 
             let rts: tablet_pc::IRealTimeStylus = com::CoCreateInstance(
                 std::ptr::from_ref(&tablet_pc::RealTimeStylus),
@@ -672,10 +670,10 @@ impl Manager {
                     // `this` pointer.
                     std::mem::transmute_copy(&unknown),
                     &com::Marshal::IMarshal::IID,
-                    &mut marshaler,
+                    std::ptr::addr_of_mut!(marshaler),
                 )
                 // *Should* be infallible, but this is a safety condition so just make really extra sure.
-                .unwrap();
+                .ok()?;
                 // QueryInterface succeeded, tells us this is an IMarshaler.
                 std::mem::transmute(marshaler)
                 // `unknown` drops and decreases refcount, but that's fine since `marshaler` keeps it alive at refcount 1.
@@ -713,12 +711,14 @@ impl Manager {
         }
     }
     /// Attempt to recover a poisoned plugin.
-    pub fn handle_poison(&mut self) -> Result<(), ()> {
+    pub fn handle_poison(&mut self) -> WinResult<()> {
+        // SAFETY: rts is an owned COM interface kept alive by this manager.
         unsafe {
-            self.rts.SetEnabled(false).map_err(|_| ())?;
-            self.rts.ClearStylusQueues().map_err(|_| ())?;
+            self.rts.SetEnabled(false)?;
+            self.rts.ClearStylusQueues()?;
         }
 
+        // SAFETY: the manager's construction contract keeps its window alive.
         let scale_factor = unsafe { fetch_himetric_to_logical_pixel(self.hwnd) };
         // Make shared state consistent.
         self.shared_frame
@@ -739,8 +739,10 @@ impl Manager {
         // We need the disable and clear to go through before the enable.
         self.poisoned.store(false, sync::atomic::Ordering::SeqCst);
 
-        unsafe {
-            self.rts.SetEnabled(true).map_err(|_| ())?;
+        // SAFETY: rts is still owned and the shared frame has been reset.
+        if let Err(error) = unsafe { self.rts.SetEnabled(true) } {
+            self.poisoned.store(true, sync::atomic::Ordering::SeqCst);
+            return Err(error);
         }
 
         Ok(())
@@ -766,7 +768,7 @@ impl Drop for Manager {
 impl super::PlatformImpl for Manager {
     fn pump(&mut self) -> Result<(), crate::PumpError> {
         if self.poisoned.load(sync::atomic::Ordering::Relaxed) {
-            self.handle_poison().map_err(|()| todo!())
+            self.handle_poison().map_err(crate::PumpError::WindowsInk)
         } else {
             // Lock and clone the inner state for this frame.
             // We clone since the user can borrow this data for unbounded amount of time before next frame,
@@ -818,3 +820,6 @@ impl super::PlatformImpl for Manager {
         )
     }
 }
+
+#[cfg(test)]
+mod tests;

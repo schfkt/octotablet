@@ -1,5 +1,9 @@
 //! Sequential information about interactions.
 
+#[cfg_attr(
+    not(any(wl_tablet, ink_rts)),
+    expect(dead_code, reason = "no backend can produce raw events")
+)]
 pub(crate) mod raw;
 
 use crate::{axis::Pose, pad, platform::PlatformImpl, tablet::Tablet, tool::Tool, Manager};
@@ -20,11 +24,22 @@ impl FrameTimestamp {
     pub fn epoch() -> Self {
         Self(std::time::Duration::ZERO)
     }
+    /// Return elapsed time, or `None` if `earlier` is later than this timestamp.
+    #[must_use]
+    pub fn checked_duration_since(self, earlier: Self) -> Option<std::time::Duration> {
+        self.0.checked_sub(earlier.0)
+    }
 }
 impl std::ops::Sub for FrameTimestamp {
     type Output = std::time::Duration;
+    /// Return elapsed time between chronologically ordered timestamps.
+    ///
+    /// # Panics
+    /// Panics if `rhs` is later than `self`, like `Duration` subtraction.
+    /// Use [`FrameTimestamp::checked_duration_since`] for unordered input.
     fn sub(self, rhs: Self) -> Self::Output {
-        self.0 - rhs.0
+        self.checked_duration_since(rhs)
+            .unwrap_or_else(|| panic!("cannot subtract a later frame timestamp"))
     }
 }
 
@@ -119,7 +134,7 @@ pub enum PadEvent<'a> {
     },
     /// The pad has become associated with the given tablet.
     ///
-    /// On some hardware, the physical association with a tablet is dynamic, such as the *Wacom ExpressKey Remote*.
+    /// On some hardware, the physical association with a tablet is dynamic, such as the *Wacom `ExpressKey` Remote*.
     /// On others, this could be a more permanent association due to it being, well, physically affixed to this tablet!
     Enter { tablet: &'a Tablet },
     /// The pad has lost it's tablet association.
@@ -380,5 +395,25 @@ impl<'manager> Iterator for EventIterator<'manager> {
         // While condition says it's Ok
         // this will be Ok(None) on finish.
         maybe_next.unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FrameTimestamp;
+    use std::time::Duration;
+
+    #[test]
+    fn checked_elapsed_time_rejects_reversed_timestamps() {
+        let earlier = FrameTimestamp(Duration::from_millis(10));
+        let later = FrameTimestamp(Duration::from_millis(25));
+        assert_eq!(earlier.checked_duration_since(later), None);
+    }
+
+    #[test]
+    fn subtraction_preserves_elapsed_duration() {
+        let earlier = FrameTimestamp(Duration::from_millis(10));
+        let later = FrameTimestamp(Duration::from_millis(25));
+        assert_eq!(later - earlier, Duration::from_millis(15));
     }
 }

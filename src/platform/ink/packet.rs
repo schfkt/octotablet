@@ -235,7 +235,8 @@ bitflags::bitflags! {
 pub struct Packet {
     pub pose: axis::Pose,
     pub timestamp: Option<events::FrameTimestamp>,
-    pub status: StatusWord,
+    // Status is decoded for packet layout validation; callbacks supply transitions.
+    pub _status: StatusWord,
 }
 
 pub struct Iter<'a> {
@@ -263,7 +264,7 @@ impl<'a> Iter<'a> {
         }
     }
 }
-impl<'a> Iterator for Iter<'a> {
+impl Iterator for Iter<'_> {
     type Item = Result<Packet, InterpretError>;
     fn next(&mut self) -> Option<Self::Item> {
         // Get the next words...
@@ -280,7 +281,7 @@ impl<'a> Iterator for Iter<'a> {
             Ok((pose, timestamp)) => Some(Ok(Packet {
                 pose,
                 timestamp,
-                status: StatusWord::from_bits_truncate(status),
+                _status: StatusWord::from_bits_truncate(status),
             })),
             Err(e) => Some(Err(e)),
         }
@@ -467,14 +468,17 @@ mod util {
     }
     impl<T> OwnedCoTaskMemSlice<T> {
         /// Transfer ownership the pointer, will be `CoTaskMemFree`'d on drop.
-        /// Safety:
-        /// * ptr must be allocated with `CoTaskMemAlloc`
-        /// * if len is not zero, ptr must be well-aligned for T
-        /// * ptr must be valid for reads for `len * sizeof T` bytes.
+        /// # Safety
+        /// * A non-null `ptr` must exclusively own a `CoTaskMemAlloc` allocation.
+        /// * If `len` is nonzero, `ptr` must be aligned and point to `len`
+        ///   initialized, valid `T` values within a single allocation.
+        /// * Its readable byte length must not exceed `isize::MAX`.
+        /// * The allocation must remain valid until this owner frees it; no
+        ///   other code may mutate the entries while a shared slice exists.
         pub unsafe fn new(ptr: *const T, len: usize) -> Self {
             if len != 0 {
                 debug_assert!(!ptr.is_null());
-                debug_assert!(ptr as usize % std::mem::align_of::<T>() == 0);
+                debug_assert!(ptr.is_aligned());
             }
             OwnedCoTaskMemSlice { ptr, len }
         }
@@ -486,6 +490,8 @@ mod util {
                 // with a known-good empty slice
                 &[]
             } else {
+                // SAFETY: new's contract guarantees alignment, initialization,
+                // and readable storage for every element until this owner drops.
                 unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
             }
         }
@@ -506,6 +512,7 @@ mod util {
     impl<T> Drop for OwnedCoTaskMemSlice<T> {
         fn drop(&mut self) {
             if !self.ptr.is_null() {
+                // SAFETY: new takes sole ownership of a CoTaskMemAlloc allocation.
                 unsafe { super::super::com::CoTaskMemFree(Some(self.ptr.cast())) };
             }
         }
@@ -514,13 +521,18 @@ mod util {
 
 /// Query everything about a tablet needed to parse packets and convert them to [`crate::axis::Pose`]s.
 /// # Safety
-/// ¯\\\_(ツ)\_/¯
+/// `rts` must be initialized on the calling COM apartment, and `tcid` must name
+/// a tablet belonging to that interface. Its packet-description result must
+/// obey the Ink API allocation contract: a CoTaskMemAlloc-owned, initialized
+/// array of `PACKET_PROPERTY` entries with the reported length.
 #[allow(clippy::too_many_lines)]
 pub unsafe fn make_interpreter(
     rts: &tablet_pc::IRealTimeStylus,
     tcid: u32,
 ) -> WinResult<(Interpreter, axis::FullInfo)> {
     use crate::axis::Union;
+    // SAFETY: the caller supplies an initialized RTS and one of its tablet IDs.
+    // Ink transfers ownership of the returned array; OwnedCoTaskMemSlice frees it.
     let properties = unsafe {
         let mut num_properties = 0;
         let mut properties = std::ptr::null_mut();

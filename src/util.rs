@@ -6,8 +6,8 @@ pub enum NicheF32Error {
 }
 
 /// An Option type where NaN is the niche.
-// Todo: manual Ord that makes it not partial.
-#[derive(Copy, Clone, PartialOrd)]
+/// Ordering follows `Option<f32>`: absence sorts before a present value.
+#[derive(Copy, Clone)]
 pub struct NicheF32(f32);
 impl NicheF32 {
     pub const NONE: NicheF32 = NicheF32(f32::NAN);
@@ -71,6 +71,11 @@ impl PartialEq for NicheF32 {
         self.get() == other.get()
     }
 }
+impl PartialOrd for NicheF32 {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.get().partial_cmp(&other.get())
+    }
+}
 // One side being non-nan makes it no longer partial!
 impl Eq for NicheF32 {}
 impl PartialEq<f32> for NicheF32 {
@@ -118,4 +123,49 @@ pub(crate) mod macro_bits {
     }
     // Weird hacks to allow use from submodules..
     pub(crate) use impl_get_id;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cmp::Ordering;
+
+    #[test]
+    fn absent_values_compare_equal() {
+        assert_eq!(
+            NicheF32::NONE.partial_cmp(&NicheF32::NONE),
+            Some(Ordering::Equal)
+        );
+    }
+
+    #[test]
+    fn ordering_matches_optional_values_including_signed_zero_and_infinities() {
+        let values = [
+            None,
+            Some(f32::NEG_INFINITY),
+            Some(-1.0),
+            Some(-0.0),
+            Some(0.0),
+            Some(1.0),
+            Some(f32::INFINITY),
+        ];
+        for left in values {
+            for right in values {
+                let left_niche = NicheF32::try_from(left).unwrap();
+                let right_niche = NicheF32::try_from(right).unwrap();
+                assert_eq!(
+                    left_niche.partial_cmp(&right_niche),
+                    left.partial_cmp(&right)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nan_is_rejected_instead_of_becoming_a_present_value() {
+        assert!(matches!(
+            NicheF32::try_from(Some(f32::NAN)),
+            Err(NicheF32Error::NaN)
+        ));
+    }
 }

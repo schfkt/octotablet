@@ -153,12 +153,17 @@ impl From<ink::ButtonID> for ButtonID {
     }
 }
 
+#[cfg(any(wl_tablet, ink_rts))]
 pub(crate) enum RawEventsIter<'a> {
     #[cfg(wl_tablet)]
     Wayland(std::slice::Iter<'a, crate::events::raw::Event<wl::ID>>),
     #[cfg(ink_rts)]
     Ink(std::slice::Iter<'a, crate::events::raw::Event<ink::ID>>),
 }
+#[cfg(not(any(wl_tablet, ink_rts)))]
+pub(crate) type RawEventsIter<'a> = std::iter::Empty<crate::events::raw::Event<InternalID>>;
+
+#[cfg(any(wl_tablet, ink_rts))]
 impl Iterator for RawEventsIter<'_> {
     type Item = crate::events::raw::Event<InternalID>;
     fn next(&mut self) -> Option<Self::Item> {
@@ -185,17 +190,40 @@ pub(crate) trait PlatformImpl {
     fn tools(&self) -> &[crate::tool::Tool];
     #[must_use]
     fn tablets(&self) -> &[crate::tablet::Tablet];
-    #[must_use]
+    #[must_use = "events must be consumed to observe device input"]
     fn raw_events(&self) -> RawEventsIter<'_>;
 }
 
 /// Static dispatch between compiled backends.
-/// Enum cause why not, (almost?) always has one variant and is thus compiles away to the inner type transparently.
-/// Even empty enum is OK, since everything involving it becomes essentially `match ! {}` which is sound :D
-#[enum_dispatch::enum_dispatch(PlatformImpl)]
+/// Usually has one variant, so dispatch compiles down to the selected backend.
+#[cfg_attr(any(wl_tablet, ink_rts), enum_dispatch::enum_dispatch(PlatformImpl))]
 pub(crate) enum PlatformManager {
     #[cfg(wl_tablet)]
     Wayland(wl::Manager),
     #[cfg(ink_rts)]
     Ink(ink::Manager),
+}
+
+// No manager can be constructed without a backend. Implement the trait directly:
+// enum_dispatch generates matches on references, which cannot be empty matches.
+#[cfg(not(any(wl_tablet, ink_rts)))]
+impl PlatformImpl for PlatformManager {
+    fn pump(&mut self) -> Result<(), crate::PumpError> {
+        match *self {}
+    }
+    fn timestamp_granularity(&self) -> Option<std::time::Duration> {
+        match *self {}
+    }
+    fn pads(&self) -> &[crate::pad::Pad] {
+        match *self {}
+    }
+    fn tools(&self) -> &[crate::tool::Tool] {
+        match *self {}
+    }
+    fn tablets(&self) -> &[crate::tablet::Tablet] {
+        match *self {}
+    }
+    fn raw_events(&self) -> RawEventsIter<'_> {
+        match *self {}
+    }
 }

@@ -105,17 +105,24 @@ impl Dispatch<wl_tablet::zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for TabletStat
             }
             // ======== Interaction data =========
             Event::ProximityIn { tablet, .. } => {
-                this.frame_in_progress(tool.id()).state_transition =
-                    Some(FrameState::In(tablet.id()));
+                this.frame_in_progress(tool.id())
+                    .transitions
+                    .push(FrameState::In(tablet.id()));
             }
-            Event::ProximityOut { .. } => {
-                this.frame_in_progress(tool.id()).state_transition = Some(FrameState::Out);
+            Event::ProximityOut => {
+                this.frame_in_progress(tool.id())
+                    .transitions
+                    .push(FrameState::Out);
             }
             Event::Down { .. } => {
-                this.frame_in_progress(tool.id()).state_transition = Some(FrameState::Down);
+                this.frame_in_progress(tool.id())
+                    .transitions
+                    .push(FrameState::Down);
             }
-            Event::Up { .. } => {
-                this.frame_in_progress(tool.id()).state_transition = Some(FrameState::Up);
+            Event::Up => {
+                this.frame_in_progress(tool.id())
+                    .transitions
+                    .push(FrameState::Up);
             }
             #[allow(clippy::cast_possible_truncation)]
             Event::Motion { x, y } => {
@@ -147,10 +154,26 @@ impl Dispatch<wl_tablet::zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for TabletStat
                 this.frame_in_progress(tool.id()).roll = Some(radians);
             }
             Event::Slider { position } => {
-                // Saturating-as (guaranteed by the protocol spec to be 0..=65535)
-                let position = u16::try_from(position).unwrap_or(65535);
-                let position = f32::from(position) / 65535.0;
+                // The protocol uses a signed range; every clamped integer fits exactly in f32.
+                #[expect(
+                    clippy::cast_precision_loss,
+                    reason = "clamped to the protocol's signed 16-bit magnitude"
+                )]
+                let position = position.clamp(-65535, 65535) as f32 / 65535.0;
                 this.frame_in_progress(tool.id()).slider = Some(position);
+            }
+            #[allow(clippy::cast_possible_truncation)]
+            Event::Wheel { degrees, clicks } => {
+                if !degrees.is_finite() {
+                    return;
+                }
+                // Wayland sends deltas; Pose exposes an absolute wheel position.
+                let wheel = this
+                    .frame_in_progress(tool.id())
+                    .wheel
+                    .get_or_insert((0.0, 0));
+                wheel.0 += (degrees as f32).to_radians();
+                wheel.1 = wheel.1.saturating_add(clicks);
             }
             Event::Button { button, state, .. } => {
                 let pressed = matches!(

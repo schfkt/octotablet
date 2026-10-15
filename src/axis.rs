@@ -89,6 +89,10 @@ impl From<Axis> for AvailableAxes {
     }
 }
 
+#[cfg_attr(
+    not(ink_rts),
+    expect(dead_code, reason = "axis unions are used by Windows Ink")
+)]
 pub(crate) trait Union {
     /// Take the union of two iteems, returning the widest spreading of both.
     #[must_use = "doesn't modify self, returns a new Info representing the union"]

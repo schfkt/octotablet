@@ -1,6 +1,10 @@
 use cfg_aliases::cfg_aliases;
 
 fn main() {
+    // These aliases are emitted by cfg_aliases below, rather than Cargo features.
+    println!("cargo:rustc-check-cfg=cfg(wl_tablet)");
+    println!("cargo:rustc-check-cfg=cfg(ink_rts)");
+    println!("cargo:rustc-check-cfg=cfg(docsrs)");
     // The script doesn't depend on our code
     println!("cargo:rerun-if-changed=build.rs");
     // But it *does* depend on cfgs!

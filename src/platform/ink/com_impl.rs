@@ -327,7 +327,7 @@ impl tablet_pc::IStylusPlugin_Impl for Plugin {
                 tool,
                 event: crate::events::raw::ToolEvent::Button {
                     button_id: ButtonID(button_guid).into(),
-                    pressed: true,
+                    pressed: false,
                 },
             });
 

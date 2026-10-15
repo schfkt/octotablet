@@ -89,6 +89,10 @@ pub enum PumpError {
     #[cfg(wl_tablet)]
     #[error(transparent)]
     WaylandDispatch(#[from] wayland_client::DispatchError),
+    /// The Windows Ink backend could not recover after a callback failure.
+    #[cfg(ink_rts)]
+    #[error("Windows Ink recovery failed: {0}")]
+    WindowsInk(#[source] windows::core::Error),
 }
 
 /// Maintains a connection to the OS's tablet server. This is the main

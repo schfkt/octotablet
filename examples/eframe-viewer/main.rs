@@ -51,20 +51,20 @@ impl EventFilter {
                 ToolEvent::Frame(..) => self.frames,
                 _ => true,
             },
-            Event::Tablet { .. } => true,
-            Event::Pad { event, .. } => match event {
-                PadEvent::Group { event, .. } => match event {
-                    PadGroupEvent::Ring { event, .. } | PadGroupEvent::Strip { event, .. } => {
-                        match event {
-                            TouchStripEvent::Frame(..) => self.frames,
-                            TouchStripEvent::Pose(..) => self.poses,
-                            _ => true,
-                        }
-                    }
-                    _ => true,
-                },
+            Event::Pad {
+                event:
+                    PadEvent::Group {
+                        event:
+                            PadGroupEvent::Ring { event, .. } | PadGroupEvent::Strip { event, .. },
+                        ..
+                    },
+                ..
+            } => match event {
+                TouchStripEvent::Frame(..) => self.frames,
+                TouchStripEvent::Pose(..) => self.poses,
                 _ => true,
             },
+            _ => true,
         }
     }
 }
@@ -265,7 +265,7 @@ impl eframe::App for Viewer {
                                         ));
                                         ui.label(format!(
                                             "Associated button indices: {:?}",
-                                            &group.buttons
+                                            group.buttons
                                         ));
                                         // Show rings
                                         egui::CollapsingHeader::new(format!(

@@ -13,6 +13,10 @@ pub enum BuildError {
     /// Failed to acquire a window handle
     #[error("{0:?}")]
     HandleError(raw_window_handle::HandleError),
+    /// The Windows Ink backend could not initialize.
+    #[cfg(ink_rts)]
+    #[error("Windows Ink initialization failed: {0}")]
+    WindowsInk(#[source] windows::core::Error),
 }
 // #[from] thiserror attribute breaks horribly D:
 impl From<raw_window_handle::HandleError> for BuildError {
@@ -100,6 +104,7 @@ impl Builder {
     /// # Safety
     /// The given display handle carrier must be keep the window and display pointers valid as long as the returned `Manager` is alive.
     /// This may be insured by using the `Backing` parameter which will be kept alive for as long as the returned Manager is.
+    #[cfg(any(wl_tablet, ink_rts))]
     unsafe fn build(
         self,
         rwh: impl raw_window_handle::HasDisplayHandle + raw_window_handle::HasWindowHandle,
@@ -126,10 +131,8 @@ impl Builder {
                 {
                     Ok(crate::platform::PlatformManager::Ink(
                         // Safety: forwarded to this fn's contract.
-                        // Fixme: unwrap.
-                        unsafe {
-                            crate::platform::ink::Manager::build_hwnd(self, wh.hwnd).unwrap()
-                        },
+                        unsafe { crate::platform::ink::Manager::build_hwnd(self, wh.hwnd) }
+                            .map_err(BuildError::WindowsInk)?,
                     ))
                 } else {
                     Err(BuildError::Unsupported)
@@ -142,5 +145,47 @@ impl Builder {
             internal,
             _backing: backing,
         })
+    }
+
+    #[cfg(not(any(wl_tablet, ink_rts)))]
+    #[expect(
+        clippy::unused_self,
+        reason = "shares the backend-enabled builder interface"
+    )]
+    unsafe fn build(
+        self,
+        _rwh: impl raw_window_handle::HasDisplayHandle + raw_window_handle::HasWindowHandle,
+        _backing: Backing,
+    ) -> Result<Manager, BuildError> {
+        Err(BuildError::Unsupported)
+    }
+}
+
+#[cfg(all(test, not(any(wl_tablet, ink_rts))))]
+mod tests {
+    use super::*;
+    use raw_window_handle::{
+        DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle,
+    };
+
+    struct UnavailableWindow;
+    impl HasDisplayHandle for UnavailableWindow {
+        fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+            Err(HandleError::Unavailable)
+        }
+    }
+    impl HasWindowHandle for UnavailableWindow {
+        fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+            Err(HandleError::Unavailable)
+        }
+    }
+
+    #[test]
+    fn building_without_backends_reports_unsupported() {
+        let window = std::sync::Arc::new(UnavailableWindow);
+        assert!(matches!(
+            Builder::new().build_shared(&window),
+            Err(BuildError::Unsupported)
+        ));
     }
 }

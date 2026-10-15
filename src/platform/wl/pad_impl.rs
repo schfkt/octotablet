@@ -113,6 +113,11 @@ impl Dispatch<wl_tablet::zwp_tablet_pad_group_v2::ZwpTabletPadGroupV2, ()> for T
                 // This is all just my best guess! Ahh!
                 // Truncates to four byte chunks. That seems like a server error if my interpretation of the arcane
                 // values are correct.
+                // Keep the conversion compatible with Rust versions predating slice::as_chunks.
+                #[expect(
+                    clippy::chunks_exact_to_as_chunks,
+                    reason = "avoid raising the library's compiler requirement"
+                )]
                 let to_u32 = buttons.chunks_exact(4).map(|bytes| {
                     let Ok(bytes): Result<[u8; 4], _> = bytes.try_into() else {
                         // Guaranteed by chunks exact but not shown at a type-level.
@@ -176,11 +181,7 @@ impl Dispatch<wl_tablet::zwp_tablet_pad_group_v2::ZwpTabletPadGroupV2, ()> for T
                 }
             }
             // ======== Interaction data =========
-            wl_tablet::zwp_tablet_pad_group_v2::Event::ModeSwitch {
-                mode,
-                time: _, //use me!
-                ..
-            } => {
+            wl_tablet::zwp_tablet_pad_group_v2::Event::ModeSwitch { mode, .. } => {
                 let Some(pad_id) = pad_id else { return };
                 this.events.push(raw_events::Event::Pad {
                     pad: pad_id,
@@ -303,7 +304,7 @@ impl Dispatch<wl_tablet::zwp_tablet_pad_strip_v2::ZwpTabletPadStripV2, ()> for T
         let Some(group) = this.strip_associations.get(&strip.id()).cloned() else {
             return;
         };
-        let Some(pad) = this.strip_associations.get(&group).cloned() else {
+        let Some(pad) = this.group_associations.get(&group).cloned() else {
             return;
         };
         #[allow(clippy::match_same_arms)]

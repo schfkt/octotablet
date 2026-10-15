@@ -134,17 +134,15 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                 ToolEvent::Down => stylus_down = true,
                 ToolEvent::Up | ToolEvent::Out => stylus_down = false,
 
-                ToolEvent::Pose(p) => {
-                    if stylus_down {
-                        let size = p.pressure.get().unwrap_or(1.0) * 10.0;
-                        let size = size as u32;
-                        let rect = sdl2::rect::Rect::from_center(
-                            (p.position[0] as i32, p.position[1] as i32),
-                            size,
-                            size,
-                        );
-                        canvas.draw_rect(rect)?;
-                    }
+                ToolEvent::Pose(p) if stylus_down => {
+                    let size = p.pressure.get().unwrap_or(1.0) * 10.0;
+                    let size = size as u32;
+                    let rect = sdl2::rect::Rect::from_center(
+                        (p.position[0] as i32, p.position[1] as i32),
+                        size,
+                        size,
+                    );
+                    canvas.draw_rect(rect)?;
                 }
                 _ => (),
             }
