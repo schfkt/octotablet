@@ -30,11 +30,13 @@ impl From<raw_window_handle::HandleError> for BuildError {
 #[allow(unused)]
 pub struct Builder {
     pub(crate) emulate_tool_from_mouse: bool,
+    pub(crate) hide_tool_cursor: bool,
 }
 impl Default for Builder {
     fn default() -> Self {
         Self {
             emulate_tool_from_mouse: true,
+            hide_tool_cursor: false,
         }
     }
 }
@@ -57,6 +59,28 @@ impl Builder {
     pub fn emulate_tool_from_mouse(self, emulate: bool) -> Self {
         Self {
             emulate_tool_from_mouse: emulate,
+            ..self
+        }
+    }
+
+    /// Hide the compositor's tablet-tool cursor on each proximity entry, including hover.
+    ///
+    /// Defaults to `false`. Applies to every tablet tool received by this manager:
+    /// pens, erasers, brushes, pencils, airbrushes, fingers, lenses, and tablet mice,
+    /// including tools whose type is unknown. Ordinary mouse and trackpad cursors
+    /// and application-drawn overlays are unaffected.
+    ///
+    /// The Wayland manager receives tablet events for the shared display, so this
+    /// policy also covers sibling surfaces on that connection. It is not restricted
+    /// to the window passed to the builder or to a canvas region. It is configured
+    /// only at construction; dropping the manager does not restore a cursor.
+    ///
+    /// # Supported platforms
+    /// * Wayland. This option has no effect on Windows Ink.
+    #[must_use]
+    pub fn hide_tool_cursor(self, hide: bool) -> Self {
+        Self {
+            hide_tool_cursor: hide,
             ..self
         }
     }
@@ -117,7 +141,7 @@ impl Builder {
                     // Safety: forwarded to this fn's contract.
                     unsafe {
                         crate::platform::wl::Manager::build_wayland_display(
-                            self,
+                            self.hide_tool_cursor,
                             wlh.display.as_ptr().cast(),
                         )
                     },
@@ -183,9 +207,11 @@ mod tests {
     #[test]
     fn building_without_backends_reports_unsupported() {
         let window = std::sync::Arc::new(UnavailableWindow);
-        assert!(matches!(
-            Builder::new().build_shared(&window),
-            Err(BuildError::Unsupported)
-        ));
+        for builder in [Builder::new(), Builder::new().hide_tool_cursor(true)] {
+            assert!(matches!(
+                builder.build_shared(&window),
+                Err(BuildError::Unsupported)
+            ));
+        }
     }
 }

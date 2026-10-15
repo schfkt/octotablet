@@ -26,7 +26,7 @@ use crate::{
 use super::InternalID;
 pub struct Manager {
     _display: wayland_client::protocol::wl_display::WlDisplay,
-    _conn: wayland_client::Connection,
+    conn: wayland_client::Connection,
     queue: wayland_client::EventQueue<TabletState>,
     _qh: wayland_client::QueueHandle<TabletState>,
     state: TabletState,
@@ -40,7 +40,7 @@ impl Manager {
     /// # Safety
     /// The given display pointer must be valid as long as the returned `Manager` is alive.
     pub(crate) unsafe fn build_wayland_display(
-        _: crate::builder::Builder,
+        hide_tool_cursor: bool,
         wl_display: *mut (),
     ) -> Manager {
         // Safety - deferred to this fn's contract
@@ -54,10 +54,13 @@ impl Manager {
         display.get_registry(&qh, ());
         Manager {
             _display: display,
-            _conn: conn,
+            conn,
             queue,
             _qh: qh,
-            state: TabletState::default(),
+            state: TabletState {
+                hide_tool_cursor,
+                ..TabletState::default()
+            },
         }
     }
 }
@@ -66,7 +69,19 @@ impl super::PlatformImpl for Manager {
     fn pump(&mut self) -> Result<(), crate::PumpError> {
         self.state.cleanup_start();
         self.queue.dispatch_pending(&mut self.state)?;
-        Ok(())
+        // Dispatch can enqueue cursor and registry requests. Do not wait for the
+        // host's next flush to deliver them, or block if the socket is full.
+        match self.conn.flush() {
+            Ok(()) => Ok(()),
+            Err(wayland_backend::client::WaylandError::Io(error))
+                if error.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                // Requests remain buffered and will be retried by the next pump
+                // or by the host flushing the shared display.
+                Ok(())
+            }
+            Err(error) => Err(wayland_client::DispatchError::from(error).into()),
+        }
     }
     fn timestamp_granularity(&self) -> Option<std::time::Duration> {
         // Wayland always reports, and with millisecond granularity.
@@ -284,6 +299,7 @@ enum ConstructID {
 
 #[derive(Default)]
 struct TabletState {
+    hide_tool_cursor: bool,
     // Internal goobers
     seat: Option<wl_seat::WlSeat>,
     manager: Option<wl_tablet::zwp_tablet_manager_v2::ZwpTabletManagerV2>,

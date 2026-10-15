@@ -693,6 +693,7 @@ impl Manager {
             {
                 let crate::builder::Builder {
                     emulate_tool_from_mouse,
+                    ..
                 } = opts;
 
                 rts.SetAllTabletsMode(emulate_tool_from_mouse)?;

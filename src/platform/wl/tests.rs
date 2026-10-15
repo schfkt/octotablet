@@ -2,6 +2,8 @@ use super::*;
 use wayland_client::protocol::wl_surface::WlSurface;
 use wl_tablet::zwp_tablet_tool_v2::{Event as ToolMessage, ZwpTabletToolV2};
 
+mod cursor;
+
 struct Input {
     state: TabletState,
     conn: Connection,

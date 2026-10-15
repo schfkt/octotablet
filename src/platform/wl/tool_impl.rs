@@ -104,7 +104,10 @@ impl Dispatch<wl_tablet::zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for TabletStat
                 });
             }
             // ======== Interaction data =========
-            Event::ProximityIn { tablet, .. } => {
+            Event::ProximityIn { serial, tablet, .. } => {
+                if this.hide_tool_cursor {
+                    tool.set_cursor(serial, None, 0, 0);
+                }
                 this.frame_in_progress(tool.id())
                     .transitions
                     .push(FrameState::In(tablet.id()));
