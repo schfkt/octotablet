@@ -5,8 +5,15 @@ build the examples as well as the library. Linux development therefore needs
 SDL2, Wayland, and xkbcommon development libraries, a C compiler, and pkg-config
 available to Cargo. Windows checks use the Windows Ink backend.
 
-Lefthook is a developer tool installed separately from the crate. Enable the
-pre-commit hook after cloning:
+On Linux, the Nix development shell supplies these tools and libraries, including
+a C compiler:
+
+```sh
+nix develop
+```
+
+Lefthook is installed globally, separately from the Nix shell and the crate.
+Enable the pre-commit hook after cloning:
 
 ```sh
 lefthook install
@@ -17,6 +24,9 @@ Run the same checks manually with:
 ```sh
 lefthook run pre-commit
 ```
+
+With Nix, run the checks directly using `nix develop -c lefthook run pre-commit`.
+Commit from inside `nix develop` so the installed hook can find its dependencies.
 
 The hook checks formatting without modifying files, runs Clippy over all targets
 with all features and warnings treated as errors, then runs the tests with all
