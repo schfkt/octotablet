@@ -80,5 +80,9 @@ softbuffer = "0.4.1"
 sdl2 = { version = "0.36.0", features = ["raw-window-handle"] }
 rwh_05 = { package = "raw-window-handle", version = "0.5.0" }
 
+[target.'cfg(unix)'.dev-dependencies]
+# Safe socket-readiness probes for the isolated Wayland wake experiments.
+rustix = { version = "0.38.31", features = ["event"] }
+
 [build-dependencies]
 cfg_aliases = "0.2.0"

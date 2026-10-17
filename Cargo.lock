@@ -2029,6 +2029,7 @@ dependencies = [
  "enum_dispatch",
  "raw-window-handle 0.5.2",
  "raw-window-handle 0.6.0",
+ "rustix 0.38.31",
  "sdl2",
  "smallvec",
  "softbuffer",
